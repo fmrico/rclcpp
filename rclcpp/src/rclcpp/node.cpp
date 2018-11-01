@@ -31,6 +31,7 @@
 #include "rclcpp/node_interfaces/node_services.hpp"
 #include "rclcpp/node_interfaces/node_timers.hpp"
 #include "rclcpp/node_interfaces/node_topics.hpp"
+#include "rclcpp/node_proxy.hpp"
 
 using rclcpp::Node;
 using rclcpp::exceptions::throw_from_rcl_error;
@@ -275,4 +276,11 @@ rclcpp::node_interfaces::NodeParametersInterface::SharedPtr
 Node::get_node_parameters_interface()
 {
   return node_parameters_;
+}
+
+std::shared_ptr<rclcpp::NodeProxy>
+Node::create_sub_node(const std::string & new_namespace_)
+{
+    return std::shared_ptr<rclcpp::NodeProxy>(
+      new rclcpp::NodeProxy(shared_from_this(), new_namespace_));
 }

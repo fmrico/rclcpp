@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef RCLCPP__NODE_HPP_
-#define RCLCPP__NODE_HPP_
+#ifndef RCLCPP__NODE_PROXY_HPP_
+#define RCLCPP__NODE_PROXY_HPP_
 
 #include <atomic>
 #include <condition_variable>
@@ -49,6 +49,7 @@
 #include "rclcpp/node_interfaces/node_services_interface.hpp"
 #include "rclcpp/node_interfaces/node_timers_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
+#include "rclcpp/node.hpp"
 #include "rclcpp/parameter.hpp"
 #include "rclcpp/publisher.hpp"
 #include "rclcpp/service.hpp"
@@ -58,58 +59,28 @@
 #include "rclcpp/timer.hpp"
 #include "rclcpp/visibility_control.hpp"
 
-
 namespace rclcpp
 {
 
-class NodeProxy;
+class Node;
 
-/// Node is the single point of entry for creating publishers and subscribers.
-class Node : public std::enable_shared_from_this<Node>
+class NodeProxy : std::enable_shared_from_this<NodeProxy>
 {
 public:
-  RCLCPP_SMART_PTR_DEFINITIONS(Node)
+  RCLCPP_SMART_PTR_DEFINITIONS(NodeProxy)
 
-  /// Create a new node with the specified name.
+  /// Create a new node proxy with the specified namespace.
   /**
-   * \param[in] node_name Name of the node.
-   * \param[in] namespace_ Namespace of the node.
-   * \param[in] use_intra_process_comms True to use the optimized intra-process communication
-   * pipeline to pass messages between nodes in the same process using shared memory.
+   * \param[in] original Node to which this proxy references.
+   * \param[in] namespace_ Namespace of the node proxy.
    */
   RCLCPP_PUBLIC
-  explicit Node(
-    const std::string & node_name,
-    const std::string & namespace_ = "",
-    bool use_intra_process_comms = false);
-
-  /// Create a node based on the node name and a rclcpp::Context.
-  /**
-   * \param[in] node_name Name of the node.
-   * \param[in] namespace_ Namespace of the node.
-   * \param[in] context The context for the node (usually represents the state of a process).
-   * \param[in] arguments Command line arguments that should apply only to this node.
-   * \param[in] initial_parameters a list of initial values for parameters on the node.
-   * This can be used to provide remapping rules that only affect one instance.
-   * \param[in] use_global_arguments False to prevent node using arguments passed to the process.
-   * \param[in] use_intra_process_comms True to use the optimized intra-process communication
-   * pipeline to pass messages between nodes in the same process using shared memory.
-   * \param[in] start_parameter_services True to setup ROS interfaces for accessing parameters
-   * in the node.
-   */
-  RCLCPP_PUBLIC
-  Node(
-    const std::string & node_name,
-    const std::string & namespace_,
-    rclcpp::Context::SharedPtr context,
-    const std::vector<std::string> & arguments,
-    const std::vector<Parameter> & initial_parameters,
-    bool use_global_arguments = true,
-    bool use_intra_process_comms = false,
-    bool start_parameter_services = true);
+  explicit NodeProxy(
+    rclcpp::Node::SharedPtr original,
+    const std::string & namespace_);
 
   RCLCPP_PUBLIC
-  virtual ~Node();
+  virtual ~NodeProxy();
 
   /// Get the name of the node.
   /** \return The name of the node. */
@@ -450,36 +421,26 @@ public:
   rclcpp::node_interfaces::NodeParametersInterface::SharedPtr
   get_node_parameters_interface();
 
-  /// Return a NodeProxy object. 
   RCLCPP_PUBLIC
   std::shared_ptr<rclcpp::NodeProxy>
   create_sub_node(const std::string & namespace_);
 
 private:
-  RCLCPP_DISABLE_COPY(Node)
+  RCLCPP_DISABLE_COPY(NodeProxy)
 
   RCLCPP_PUBLIC
-  bool
-  group_in_node(callback_group::CallbackGroup::SharedPtr group);
+  const std::string add_ns_prefix_if_relative(const std::string & original_name) const;
 
-  rclcpp::node_interfaces::NodeBaseInterface::SharedPtr node_base_;
-  rclcpp::node_interfaces::NodeGraphInterface::SharedPtr node_graph_;
-  rclcpp::node_interfaces::NodeLoggingInterface::SharedPtr node_logging_;
-  rclcpp::node_interfaces::NodeTimersInterface::SharedPtr node_timers_;
-  rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr node_topics_;
-  rclcpp::node_interfaces::NodeServicesInterface::SharedPtr node_services_;
-  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr node_parameters_;
-  rclcpp::node_interfaces::NodeClockInterface::SharedPtr node_clock_;
+  std::string namespace_;
+  rclcpp::Node::SharedPtr original_;
 
-  bool use_intra_process_comms_;
 };
 
 }  // namespace rclcpp
 
-
-#ifndef RCLCPP__NODE_IMPL_HPP_
+#ifndef RCLCPP__NODE_PROXY_IMPL_HPP_
 // Template implementations
-#include "node_impl.hpp"
+#include "node_proxy_impl.hpp"
 #endif
 
-#endif  // RCLCPP__NODE_HPP_
+#endif  // RCLCPP__NODE_PROXY_HPP_
