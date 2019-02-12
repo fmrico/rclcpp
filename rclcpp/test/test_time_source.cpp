@@ -37,6 +37,11 @@ protected:
     rclcpp::init(0, nullptr);
   }
 
+  static void TearDownTestCase()
+  {
+    rclcpp::shutdown();
+  }
+
   void SetUp()
   {
     node = std::make_shared<rclcpp::Node>("my_node");
@@ -107,7 +112,7 @@ TEST_F(TestTimeSource, reattach) {
   ASSERT_NO_THROW(ts.attachNode(node));
 }
 
-TEST_F(TestTimeSource, ROS_time_valid) {
+TEST_F(TestTimeSource, ROS_time_valid_attach_detach) {
   rclcpp::TimeSource ts;
   auto ros_clock = std::make_shared<rclcpp::Clock>(RCL_ROS_TIME);
 
@@ -124,6 +129,37 @@ TEST_F(TestTimeSource, ROS_time_valid) {
 
   ts.attachNode(node);
   EXPECT_FALSE(ros_clock->ros_time_is_active());
+}
+
+TEST_F(TestTimeSource, ROS_time_valid_wall_time) {
+  rclcpp::TimeSource ts;
+  auto ros_clock = std::make_shared<rclcpp::Clock>(RCL_ROS_TIME);
+  auto ros_clock2 = std::make_shared<rclcpp::Clock>(RCL_ROS_TIME);
+
+  ts.attachClock(ros_clock);
+  EXPECT_FALSE(ros_clock->ros_time_is_active());
+
+  ts.attachNode(node);
+  EXPECT_FALSE(ros_clock->ros_time_is_active());
+
+  ts.attachClock(ros_clock2);
+  EXPECT_FALSE(ros_clock2->ros_time_is_active());
+}
+
+TEST_F(TestTimeSource, ROS_time_valid_sim_time) {
+  rclcpp::TimeSource ts;
+  auto ros_clock = std::make_shared<rclcpp::Clock>(RCL_ROS_TIME);
+  auto ros_clock2 = std::make_shared<rclcpp::Clock>(RCL_ROS_TIME);
+
+  ts.attachClock(ros_clock);
+  EXPECT_FALSE(ros_clock->ros_time_is_active());
+
+  node->set_parameter_if_not_set("use_sim_time", true);
+  ts.attachNode(node);
+  EXPECT_TRUE(ros_clock->ros_time_is_active());
+
+  ts.attachClock(ros_clock2);
+  EXPECT_TRUE(ros_clock2->ros_time_is_active());
 }
 
 TEST_F(TestTimeSource, clock) {
@@ -348,14 +384,14 @@ TEST_F(TestTimeSource, parameter_activation) {
   EXPECT_TRUE(ros_clock->ros_time_is_active());
 
   set_use_sim_time_parameter(
-    node, rclcpp::ParameterValue(rclcpp::ParameterType::PARAMETER_NOT_SET));
+    node, rclcpp::ParameterValue());
   EXPECT_TRUE(ros_clock->ros_time_is_active());
 
   set_use_sim_time_parameter(node, rclcpp::ParameterValue(false));
   EXPECT_FALSE(ros_clock->ros_time_is_active());
 
   set_use_sim_time_parameter(
-    node, rclcpp::ParameterValue(rclcpp::ParameterType::PARAMETER_NOT_SET));
+    node, rclcpp::ParameterValue());
   EXPECT_FALSE(ros_clock->ros_time_is_active());
 
   // If the use_sim_time parameter is not explicitly set to True, this clock's use of sim time

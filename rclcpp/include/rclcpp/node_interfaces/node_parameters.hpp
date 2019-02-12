@@ -51,9 +51,12 @@ public:
     const node_interfaces::NodeBaseInterface::SharedPtr node_base,
     const node_interfaces::NodeTopicsInterface::SharedPtr node_topics,
     const node_interfaces::NodeServicesInterface::SharedPtr node_services,
+    const node_interfaces::NodeClockInterface::SharedPtr node_clock,
     const std::vector<Parameter> & initial_parameters,
     bool use_intra_process,
-    bool start_parameter_services);
+    bool start_parameter_services,
+    bool start_parameter_event_publisher,
+    const rmw_qos_profile_t & parameter_event_qos_profile);
 
   RCLCPP_PUBLIC
   virtual
@@ -90,6 +93,13 @@ public:
 
   RCLCPP_PUBLIC
   virtual
+  bool
+  get_parameters_by_prefix(
+    const std::string & prefix,
+    std::map<std::string, rclcpp::Parameter> & parameters) const;
+
+  RCLCPP_PUBLIC
+  virtual
   std::vector<rcl_interfaces::msg::ParameterDescriptor>
   describe_parameters(const std::vector<std::string> & names) const;
 
@@ -120,6 +130,10 @@ private:
   Publisher<rcl_interfaces::msg::ParameterEvent>::SharedPtr events_publisher_;
 
   std::shared_ptr<ParameterService> parameter_service_;
+
+  std::string combined_name_;
+
+  node_interfaces::NodeClockInterface::SharedPtr node_clock_;
 };
 
 }  // namespace node_interfaces

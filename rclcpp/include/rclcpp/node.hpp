@@ -41,14 +41,17 @@
 #include "rclcpp/logger.hpp"
 #include "rclcpp/macros.hpp"
 #include "rclcpp/message_memory_strategy.hpp"
+#include "rclcpp/node_options.hpp"
 #include "rclcpp/node_interfaces/node_base_interface.hpp"
 #include "rclcpp/node_interfaces/node_clock_interface.hpp"
 #include "rclcpp/node_interfaces/node_graph_interface.hpp"
 #include "rclcpp/node_interfaces/node_logging_interface.hpp"
 #include "rclcpp/node_interfaces/node_parameters_interface.hpp"
 #include "rclcpp/node_interfaces/node_services_interface.hpp"
+#include "rclcpp/node_interfaces/node_time_source_interface.hpp"
 #include "rclcpp/node_interfaces/node_timers_interface.hpp"
 #include "rclcpp/node_interfaces/node_topics_interface.hpp"
+#include "rclcpp/node_interfaces/node_waitables_interface.hpp"
 #include "rclcpp/parameter.hpp"
 #include "rclcpp/publisher.hpp"
 #include "rclcpp/service.hpp"
@@ -72,40 +75,24 @@ public:
   /// Create a new node with the specified name.
   /**
    * \param[in] node_name Name of the node.
-   * \param[in] namespace_ Namespace of the node.
-   * \param[in] use_intra_process_comms True to use the optimized intra-process communication
-   * pipeline to pass messages between nodes in the same process using shared memory.
+   * \param[in] options Additional options to control creation of the node.
    */
   RCLCPP_PUBLIC
   explicit Node(
     const std::string & node_name,
-    const std::string & namespace_ = "",
-    bool use_intra_process_comms = false);
+    const NodeOptions & options = NodeOptions());
 
-  /// Create a node based on the node name and a rclcpp::Context.
+  /// Create a new node with the specified name.
   /**
    * \param[in] node_name Name of the node.
    * \param[in] namespace_ Namespace of the node.
-   * \param[in] context The context for the node (usually represents the state of a process).
-   * \param[in] arguments Command line arguments that should apply only to this node.
-   * \param[in] initial_parameters a list of initial values for parameters on the node.
-   * This can be used to provide remapping rules that only affect one instance.
-   * \param[in] use_global_arguments False to prevent node using arguments passed to the process.
-   * \param[in] use_intra_process_comms True to use the optimized intra-process communication
-   * pipeline to pass messages between nodes in the same process using shared memory.
-   * \param[in] start_parameter_services True to setup ROS interfaces for accessing parameters
-   * in the node.
+   * \param[in] options Additional options to control creation of the node.
    */
   RCLCPP_PUBLIC
-  Node(
+  explicit Node(
     const std::string & node_name,
     const std::string & namespace_,
-    rclcpp::Context::SharedPtr context,
-    const std::vector<std::string> & arguments,
-    const std::vector<Parameter> & initial_parameters,
-    bool use_global_arguments = true,
-    bool use_intra_process_comms = false,
-    bool start_parameter_services = true);
+    const NodeOptions & options = NodeOptions());
 
   RCLCPP_PUBLIC
   virtual ~Node();
@@ -279,6 +266,20 @@ public:
     const std::string & name,
     const ParameterT & value);
 
+  /// Set a map of parameters with the same prefix.
+  /**
+   * For each key in the map, a parameter with a name of "name.key" will be set
+   * to the value in the map.
+   *
+   * \param[in] name The prefix of the parameters to set.
+   * \param[in] values The parameters to set in the given prefix.
+   */
+  template<typename MapValueT>
+  void
+  set_parameters_if_not_set(
+    const std::string & name,
+    const std::map<std::string, MapValueT> & values);
+
   RCLCPP_PUBLIC
   std::vector<rclcpp::Parameter>
   get_parameters(const std::vector<std::string> & names) const;
@@ -304,6 +305,24 @@ public:
   template<typename ParameterT>
   bool
   get_parameter(const std::string & name, ParameterT & parameter) const;
+
+  /// Assign the value of the map parameter if set into the values argument.
+  /**
+   * Parameter names that are part of a map are of the form "name.member".
+   * This API gets all parameters that begin with "name", storing them into the
+   * map with the name of the parameter and their value.
+   * If there are no members in the named map, then the "values" argument is not changed.
+   *
+   * \param[in] name The prefix of the parameters to get.
+   * \param[out] values The map of output values, with one std::string,MapValueT
+   *                    per parameter.
+   * \returns true if values was changed, false otherwise
+   */
+  template<typename MapValueT>
+  bool
+  get_parameters(
+    const std::string & name,
+    std::map<std::string, MapValueT> & values) const;
 
   /// Get the parameter value, or the "alternative value" if not set, and assign it to "value".
   /**
@@ -429,6 +448,11 @@ public:
   rclcpp::node_interfaces::NodeGraphInterface::SharedPtr
   get_node_graph_interface();
 
+  /// Return the Node's internal NodeLoggingInterface implementation.
+  RCLCPP_PUBLIC
+  rclcpp::node_interfaces::NodeLoggingInterface::SharedPtr
+  get_node_logging_interface();
+
   /// Return the Node's internal NodeTimersInterface implementation.
   RCLCPP_PUBLIC
   rclcpp::node_interfaces::NodeTimersInterface::SharedPtr
@@ -444,6 +468,11 @@ public:
   rclcpp::node_interfaces::NodeServicesInterface::SharedPtr
   get_node_services_interface();
 
+  /// Return the Node's internal NodeWaitablesInterface implementation.
+  RCLCPP_PUBLIC
+  rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr
+  get_node_waitables_interface();
+
   /// Return the Node's internal NodeParametersInterface implementation.
   RCLCPP_PUBLIC
   rclcpp::node_interfaces::NodeParametersInterface::SharedPtr
@@ -453,6 +482,11 @@ public:
   RCLCPP_PUBLIC
   std::shared_ptr<rclcpp::SubNode>
   create_sub_node(const std::string & namespace_);
+
+  /// Return the Node's internal NodeParametersInterface implementation.
+  RCLCPP_PUBLIC
+  rclcpp::node_interfaces::NodeTimeSourceInterface::SharedPtr
+  get_node_time_source_interface();
 
 private:
   RCLCPP_DISABLE_COPY(Node)
@@ -467,8 +501,10 @@ private:
   rclcpp::node_interfaces::NodeTimersInterface::SharedPtr node_timers_;
   rclcpp::node_interfaces::NodeTopicsInterface::SharedPtr node_topics_;
   rclcpp::node_interfaces::NodeServicesInterface::SharedPtr node_services_;
-  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr node_parameters_;
   rclcpp::node_interfaces::NodeClockInterface::SharedPtr node_clock_;
+  rclcpp::node_interfaces::NodeParametersInterface::SharedPtr node_parameters_;
+  rclcpp::node_interfaces::NodeTimeSourceInterface::SharedPtr node_time_source_;
+  rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr node_waitables_;
 
   bool use_intra_process_comms_;
 

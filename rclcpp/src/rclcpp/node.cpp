@@ -29,59 +29,63 @@
 #include "rclcpp/node_interfaces/node_logging.hpp"
 #include "rclcpp/node_interfaces/node_parameters.hpp"
 #include "rclcpp/node_interfaces/node_services.hpp"
+#include "rclcpp/node_interfaces/node_time_source.hpp"
 #include "rclcpp/node_interfaces/node_timers.hpp"
 #include "rclcpp/node_interfaces/node_topics.hpp"
 #include "rclcpp/sub_node.hpp"
+#include "rclcpp/node_interfaces/node_waitables.hpp"
 
 using rclcpp::Node;
+using rclcpp::NodeOptions;
 using rclcpp::exceptions::throw_from_rcl_error;
 
 Node::Node(
   const std::string & node_name,
-  const std::string & namespace_,
-  bool use_intra_process_comms)
-: Node(
-    node_name,
-    namespace_,
-    rclcpp::contexts::default_context::get_global_default_context(),
-    {},
-    {},
-    true,
-    use_intra_process_comms,
-    true)
-{}
+  const NodeOptions & options)
+: Node(node_name, "", options)
+{
+}
 
 Node::Node(
   const std::string & node_name,
   const std::string & namespace_,
-  rclcpp::Context::SharedPtr context,
-  const std::vector<std::string> & arguments,
-  const std::vector<rclcpp::Parameter> & initial_parameters,
-  bool use_global_arguments,
-  bool use_intra_process_comms,
-  bool start_parameter_services)
+  const NodeOptions & options)
 : node_base_(new rclcpp::node_interfaces::NodeBase(
-      node_name, namespace_, context, arguments, use_global_arguments)),
+      node_name, namespace_, options)),
   node_graph_(new rclcpp::node_interfaces::NodeGraph(node_base_.get())),
   node_logging_(new rclcpp::node_interfaces::NodeLogging(node_base_.get())),
   node_timers_(new rclcpp::node_interfaces::NodeTimers(node_base_.get())),
   node_topics_(new rclcpp::node_interfaces::NodeTopics(node_base_.get())),
   node_services_(new rclcpp::node_interfaces::NodeServices(node_base_.get())),
-  node_parameters_(new rclcpp::node_interfaces::NodeParameters(
-      node_base_,
-      node_topics_,
-      node_services_,
-      initial_parameters,
-      use_intra_process_comms,
-      start_parameter_services
-    )),
   node_clock_(new rclcpp::node_interfaces::NodeClock(
       node_base_,
       node_topics_,
       node_graph_,
-      node_services_
+      node_services_,
+      node_logging_
     )),
-  use_intra_process_comms_(use_intra_process_comms)
+  node_parameters_(new rclcpp::node_interfaces::NodeParameters(
+      node_base_,
+      node_topics_,
+      node_services_,
+      node_clock_,
+      options.initial_parameters(),
+      options.use_intra_process_comms(),
+      options.start_parameter_services(),
+      options.start_parameter_event_publisher(),
+      options.parameter_event_qos_profile()
+    )),
+  node_time_source_(new rclcpp::node_interfaces::NodeTimeSource(
+      node_base_,
+      node_topics_,
+      node_graph_,
+      node_services_,
+      node_logging_,
+      node_clock_,
+      node_parameters_
+    )),
+  node_waitables_(new rclcpp::node_interfaces::NodeWaitables(node_base_.get())),
+  use_intra_process_comms_(options.use_intra_process_comms())
 {
 }
 
@@ -254,6 +258,18 @@ Node::get_node_graph_interface()
   return node_graph_;
 }
 
+rclcpp::node_interfaces::NodeLoggingInterface::SharedPtr
+Node::get_node_logging_interface()
+{
+  return node_logging_;
+}
+
+rclcpp::node_interfaces::NodeTimeSourceInterface::SharedPtr
+Node::get_node_time_source_interface()
+{
+  return node_time_source_;
+}
+
 rclcpp::node_interfaces::NodeTimersInterface::SharedPtr
 Node::get_node_timers_interface()
 {
@@ -283,4 +299,10 @@ Node::create_sub_node(const std::string & namespace_)
 {
   return std::shared_ptr<rclcpp::SubNode>(
     new rclcpp::SubNode(shared_from_this(), namespace_));
+}
+
+rclcpp::node_interfaces::NodeWaitablesInterface::SharedPtr
+Node::get_node_waitables_interface()
+{
+  return node_waitables_;
 }

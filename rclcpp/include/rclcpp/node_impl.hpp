@@ -160,7 +160,8 @@ Node::create_wall_timer(
 {
   auto timer = rclcpp::WallTimer<CallbackT>::make_shared(
     std::chrono::duration_cast<std::chrono::nanoseconds>(period),
-    std::move(callback));
+    std::move(callback),
+    this->node_base_->get_context());
   node_timers_->add_timer(timer, group);
   return timer;
 }
@@ -223,6 +224,28 @@ Node::set_parameter_if_not_set(
   }
 }
 
+// this is a partially-specialized version of set_parameter_if_not_set above,
+// where our concrete type for ParameterT is std::map, but the to-be-determined
+// type is the value in the map.
+template<typename MapValueT>
+void
+Node::set_parameters_if_not_set(
+  const std::string & name,
+  const std::map<std::string, MapValueT> & values)
+{
+  std::vector<rclcpp::Parameter> params;
+
+  for (const auto & val : values) {
+    std::string param_name = name + "." + val.first;
+    rclcpp::Parameter parameter;
+    if (!this->get_parameter(param_name, parameter)) {
+      params.push_back(rclcpp::Parameter(param_name, val.second));
+    }
+  }
+
+  this->set_parameters(params);
+}
+
 template<typename ParameterT>
 bool
 Node::get_parameter(const std::string & name, ParameterT & value) const
@@ -231,6 +254,26 @@ Node::get_parameter(const std::string & name, ParameterT & value) const
   bool result = get_parameter(name, parameter);
   if (result) {
     value = parameter.get_value<ParameterT>();
+  }
+
+  return result;
+}
+
+// this is a partially-specialized version of get_parameter above,
+// where our concrete type for ParameterT is std::map, but the to-be-determined
+// type is the value in the map.
+template<typename MapValueT>
+bool
+Node::get_parameters(
+  const std::string & name,
+  std::map<std::string, MapValueT> & values) const
+{
+  std::map<std::string, rclcpp::Parameter> params;
+  bool result = node_parameters_->get_parameters_by_prefix(name, params);
+  if (result) {
+    for (const auto & param : params) {
+      values[param.first] = param.second.get_value<MapValueT>();
+    }
   }
 
   return result;

@@ -14,189 +14,50 @@
 
 #include "rclcpp/utilities.hpp"
 
-#include <atomic>
-#include <condition_variable>
-#include <csignal>
-#include <cstdio>
-#include <cstring>
-#include <map>
-#include <mutex>
 #include <string>
 #include <vector>
 
+#include "./signal_handler.hpp"
+#include "rclcpp/contexts/default_context.hpp"
 #include "rclcpp/exceptions.hpp"
 
 #include "rcl/error_handling.h"
 #include "rcl/rcl.h"
 
-#include "rmw/error_handling.h"
-#include "rmw/rmw.h"
-
-#include "rcutils/logging_macros.h"
-
-// Determine if sigaction is available
-#if __APPLE__ || _POSIX_C_SOURCE >= 1 || _XOPEN_SOURCE || _POSIX_SOURCE
-#define HAS_SIGACTION
-#endif
-
-/// Represent the status of the global interrupt signal.
-static volatile sig_atomic_t g_signal_status = 0;
-/// Guard conditions for interrupting the rmw implementation when the global interrupt signal fired.
-static std::map<rcl_wait_set_t *, rcl_guard_condition_t> g_sigint_guard_cond_handles;
-/// Mutex to protect g_sigint_guard_cond_handles
-static std::mutex g_sigint_guard_cond_handles_mutex;
-/// Condition variable for timed sleep (see sleep_for).
-static std::condition_variable g_interrupt_condition_variable;
-static std::atomic<bool> g_is_interrupted(false);
-/// Mutex for protecting the global condition variable.
-static std::mutex g_interrupt_mutex;
-
-#ifdef HAS_SIGACTION
-static struct sigaction old_action;
-#else
-typedef void (* signal_handler_t)(int);
-static signal_handler_t old_signal_handler = 0;
-#endif
-
-#ifdef HAS_SIGACTION
-struct sigaction
-set_sigaction(int signal_value, const struct sigaction & action)
-#else
-signal_handler_t
-set_signal_handler(int signal_value, signal_handler_t signal_handler)
-#endif
+void
+rclcpp::init(int argc, char const * const argv[], const rclcpp::InitOptions & init_options)
 {
-#ifdef HAS_SIGACTION
-  struct sigaction old_action;
-  ssize_t ret = sigaction(signal_value, &action, &old_action);
-  if (ret == -1)
-#else
-  signal_handler_t old_signal_handler = std::signal(signal_value, signal_handler);
-  // NOLINTNEXTLINE(readability/braces)
-  if (old_signal_handler == SIG_ERR)
-#endif
-  {
-    const size_t error_length = 1024;
-    // NOLINTNEXTLINE(runtime/arrays)
-    char error_string[error_length];
-#ifndef _WIN32
-#if (defined(_GNU_SOURCE) && !defined(ANDROID))
-    char * msg = strerror_r(errno, error_string, error_length);
-    if (msg != error_string) {
-      strncpy(error_string, msg, error_length);
-      msg[error_length - 1] = '\0';
-    }
-#else
-    int error_status = strerror_r(errno, error_string, error_length);
-    if (error_status != 0) {
-      throw std::runtime_error("Failed to get error string for errno: " + std::to_string(errno));
-    }
-#endif
-#else
-    strerror_s(error_string, error_length, errno);
-#endif
-    // *INDENT-OFF* (prevent uncrustify from making unnecessary indents here)
-    throw std::runtime_error(
-      std::string("Failed to set SIGINT signal handler: (" + std::to_string(errno) + ")") +
-      error_string);
-    // *INDENT-ON*
-  }
-
-#ifdef HAS_SIGACTION
-  return old_action;
-#else
-  return old_signal_handler;
-#endif
+  using rclcpp::contexts::default_context::get_global_default_context;
+  get_global_default_context()->init(argc, argv, init_options);
+  // Install the signal handlers.
+  rclcpp::install_signal_handlers();
 }
 
-void
-trigger_interrupt_guard_condition(int signal_value)
+bool
+rclcpp::install_signal_handlers()
 {
-  g_signal_status = signal_value;
-  {
-    std::lock_guard<std::mutex> lock(g_sigint_guard_cond_handles_mutex);
-    for (auto & kv : g_sigint_guard_cond_handles) {
-      rcl_ret_t status = rcl_trigger_guard_condition(&(kv.second));
-      if (status != RCL_RET_OK) {
-        RCUTILS_LOG_ERROR_NAMED(
-          "rclcpp",
-          "failed to trigger guard condition: %s", rcl_get_error_string().str);
-      }
-    }
-  }
-  g_is_interrupted.store(true);
-  g_interrupt_condition_variable.notify_all();
+  return rclcpp::SignalHandler::get_global_signal_handler().install();
 }
 
-void
-#ifdef HAS_SIGACTION
-signal_handler(int signal_value, siginfo_t * siginfo, void * context)
-#else
-signal_handler(int signal_value)
-#endif
+bool
+rclcpp::signal_handlers_installed()
 {
-  // TODO(wjwwood): remove? move to console logging at some point?
-  printf("signal_handler(%d)\n", signal_value);
-
-#ifdef HAS_SIGACTION
-  if (old_action.sa_flags & SA_SIGINFO) {
-    if (old_action.sa_sigaction != NULL) {
-      old_action.sa_sigaction(signal_value, siginfo, context);
-    }
-  } else {
-    if (
-      old_action.sa_handler != NULL &&  // Is set
-      old_action.sa_handler != SIG_DFL &&  // Is not default
-      old_action.sa_handler != SIG_IGN)  // Is not ignored
-    {
-      old_action.sa_handler(signal_value);
-    }
-  }
-#else
-  if (old_signal_handler) {
-    old_signal_handler(signal_value);
-  }
-#endif
-
-  trigger_interrupt_guard_condition(signal_value);
+  return rclcpp::SignalHandler::get_global_signal_handler().is_installed();
 }
 
-void
-rclcpp::init(int argc, char const * const argv[])
+bool
+rclcpp::uninstall_signal_handlers()
 {
-  g_is_interrupted.store(false);
-  if (rcl_init(argc, argv, rcl_get_default_allocator()) != RCL_RET_OK) {
-    std::string msg = "failed to initialize rmw implementation: ";
-    msg += rcl_get_error_string().str;
-    rcl_reset_error();
-    throw std::runtime_error(msg);
-  }
-#ifdef HAS_SIGACTION
-  struct sigaction action;
-  memset(&action, 0, sizeof(action));
-  sigemptyset(&action.sa_mask);
-  action.sa_sigaction = ::signal_handler;
-  action.sa_flags = SA_SIGINFO;
-  ::old_action = set_sigaction(SIGINT, action);
-  // Register an on_shutdown hook to restore the old action.
-  rclcpp::on_shutdown(
-    []() {
-      set_sigaction(SIGINT, ::old_action);
-    });
-#else
-  ::old_signal_handler = set_signal_handler(SIGINT, ::signal_handler);
-  // Register an on_shutdown hook to restore the old signal handler.
-  rclcpp::on_shutdown(
-    []() {
-      set_signal_handler(SIGINT, ::old_signal_handler);
-    });
-#endif
+  return rclcpp::SignalHandler::get_global_signal_handler().uninstall();
 }
 
 std::vector<std::string>
-rclcpp::init_and_remove_ros_arguments(int argc, char const * const argv[])
+rclcpp::init_and_remove_ros_arguments(
+  int argc,
+  char const * const argv[],
+  const rclcpp::InitOptions & init_options)
 {
-  rclcpp::init(argc, argv);
+  rclcpp::init(argc, argv, init_options);
   return rclcpp::remove_ros_arguments(argc, argv);
 }
 
@@ -210,7 +71,7 @@ rclcpp::remove_ros_arguments(int argc, char const * const argv[])
 
   ret = rcl_parse_arguments(argc, argv, alloc, &parsed_args);
   if (RCL_RET_OK != ret) {
-    exceptions::throw_from_rcl_error(ret, "failed to parse arguments");
+    rclcpp::exceptions::throw_from_rcl_error(ret, "failed to parse arguments");
   }
 
   int nonros_argc = 0;
@@ -225,7 +86,7 @@ rclcpp::remove_ros_arguments(int argc, char const * const argv[])
 
   if (RCL_RET_OK != ret) {
     // Not using throw_from_rcl_error, because we may need to append deallocation failures.
-    exceptions::RCLErrorBase base_exc(ret, rcl_get_error_state());
+    rclcpp::exceptions::RCLErrorBase base_exc(ret, rcl_get_error_state());
     rcl_reset_error();
     if (NULL != nonros_argv) {
       alloc.deallocate(nonros_argv, alloc.state);
@@ -236,7 +97,7 @@ rclcpp::remove_ros_arguments(int argc, char const * const argv[])
         rcl_get_error_string().str;
       rcl_reset_error();
     }
-    throw exceptions::RCLError(base_exc, "");
+    throw rclcpp::exceptions::RCLError(base_exc, "");
   }
 
   std::vector<std::string> return_arguments;
@@ -252,106 +113,62 @@ rclcpp::remove_ros_arguments(int argc, char const * const argv[])
 
   ret = rcl_arguments_fini(&parsed_args);
   if (RCL_RET_OK != ret) {
-    exceptions::throw_from_rcl_error(ret, "failed to cleanup parsed arguments, leaking memory");
+    rclcpp::exceptions::throw_from_rcl_error(
+      ret, "failed to cleanup parsed arguments, leaking memory");
   }
 
   return return_arguments;
 }
 
 bool
-rclcpp::ok()
+rclcpp::ok(rclcpp::Context::SharedPtr context)
 {
-  return ::g_signal_status == 0;
+  using rclcpp::contexts::default_context::get_global_default_context;
+  if (nullptr == context) {
+    context = get_global_default_context();
+  }
+  return context->is_valid();
 }
 
 bool
-rclcpp::is_initialized()
+rclcpp::is_initialized(rclcpp::Context::SharedPtr context)
 {
-  return rcl_ok();
-}
-
-static std::mutex on_shutdown_mutex_;
-static std::vector<std::function<void(void)>> on_shutdown_callbacks_;
-
-void
-rclcpp::shutdown()
-{
-  trigger_interrupt_guard_condition(SIGINT);
-
-  {
-    std::lock_guard<std::mutex> lock(on_shutdown_mutex_);
-    for (auto & on_shutdown_callback : on_shutdown_callbacks_) {
-      on_shutdown_callback();
-    }
-  }
-}
-
-void
-rclcpp::on_shutdown(std::function<void(void)> callback)
-{
-  std::lock_guard<std::mutex> lock(on_shutdown_mutex_);
-  on_shutdown_callbacks_.push_back(callback);
-}
-
-rcl_guard_condition_t *
-rclcpp::get_sigint_guard_condition(rcl_wait_set_t * wait_set)
-{
-  std::lock_guard<std::mutex> lock(g_sigint_guard_cond_handles_mutex);
-  auto kv = g_sigint_guard_cond_handles.find(wait_set);
-  if (kv != g_sigint_guard_cond_handles.end()) {
-    return &kv->second;
-  } else {
-    rcl_guard_condition_t handle =
-      rcl_get_zero_initialized_guard_condition();
-    rcl_guard_condition_options_t options = rcl_guard_condition_get_default_options();
-    if (rcl_guard_condition_init(&handle, options) != RCL_RET_OK) {
-      // *INDENT-OFF* (prevent uncrustify from making unnecessary indents here)
-      throw std::runtime_error(std::string(
-        "Couldn't initialize guard condition: ") + rcl_get_error_string().str);
-      // *INDENT-ON*
-    }
-    g_sigint_guard_cond_handles[wait_set] = handle;
-    return &g_sigint_guard_cond_handles[wait_set];
-  }
-}
-
-void
-rclcpp::release_sigint_guard_condition(rcl_wait_set_t * wait_set)
-{
-  std::lock_guard<std::mutex> lock(g_sigint_guard_cond_handles_mutex);
-  auto kv = g_sigint_guard_cond_handles.find(wait_set);
-  if (kv != g_sigint_guard_cond_handles.end()) {
-    if (rcl_guard_condition_fini(&kv->second) != RCL_RET_OK) {
-      // *INDENT-OFF* (prevent uncrustify from making unnecessary indents here)
-      throw std::runtime_error(std::string(
-        "Failed to destroy sigint guard condition: ") +
-        rcl_get_error_string().str);
-      // *INDENT-ON*
-    }
-    g_sigint_guard_cond_handles.erase(kv);
-  } else {
-    // *INDENT-OFF* (prevent uncrustify from making unnecessary indents here)
-    throw std::runtime_error(std::string(
-      "Tried to release sigint guard condition for nonexistent wait set"));
-    // *INDENT-ON*
-  }
+  return rclcpp::ok(context);
 }
 
 bool
-rclcpp::sleep_for(const std::chrono::nanoseconds & nanoseconds)
+rclcpp::shutdown(rclcpp::Context::SharedPtr context, const std::string & reason)
 {
-  std::chrono::nanoseconds time_left = nanoseconds;
-  {
-    std::unique_lock<std::mutex> lock(::g_interrupt_mutex);
-    auto start = std::chrono::steady_clock::now();
-    ::g_interrupt_condition_variable.wait_for(lock, nanoseconds);
-    time_left -= std::chrono::steady_clock::now() - start;
+  using rclcpp::contexts::default_context::get_global_default_context;
+  auto default_context = get_global_default_context();
+  if (nullptr == context) {
+    context = default_context;
   }
-  if (time_left > std::chrono::nanoseconds::zero() && !g_is_interrupted) {
-    return sleep_for(time_left);
+  bool ret = context->shutdown(reason);
+  if (context == default_context) {
+    rclcpp::uninstall_signal_handlers();
   }
-  // Return true if the timeout elapsed successfully, otherwise false.
-  return !g_is_interrupted;
+  return ret;
+}
+
+void
+rclcpp::on_shutdown(std::function<void()> callback, rclcpp::Context::SharedPtr context)
+{
+  using rclcpp::contexts::default_context::get_global_default_context;
+  if (nullptr == context) {
+    context = get_global_default_context();
+  }
+  context->on_shutdown(callback);
+}
+
+bool
+rclcpp::sleep_for(const std::chrono::nanoseconds & nanoseconds, rclcpp::Context::SharedPtr context)
+{
+  using rclcpp::contexts::default_context::get_global_default_context;
+  if (nullptr == context) {
+    context = get_global_default_context();
+  }
+  return context->sleep_for(nanoseconds);
 }
 
 const char *

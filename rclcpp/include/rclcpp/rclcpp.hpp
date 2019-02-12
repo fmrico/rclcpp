@@ -155,5 +155,6 @@
 #include "rclcpp/time.hpp"
 #include "rclcpp/utilities.hpp"
 #include "rclcpp/visibility_control.hpp"
+#include "rclcpp/waitable.hpp"
 
 #endif  // RCLCPP__RCLCPP_HPP_
